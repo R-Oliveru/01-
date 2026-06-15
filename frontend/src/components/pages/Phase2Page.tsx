@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useApp } from '../../context/AppContext';
+import { getDefaultPhases } from '../../context/AppContext';
 import type { Project, ProjectStatus, ProjectPhase, IdeaCategory } from '../../types';
 import { CATEGORY_MAP, PROJECT_STATUS_MAP } from '../../utils/constants';
-import { timeAgo } from '../../utils/calculations';
+import { timeAgo, calcProjectProgress } from '../../utils/calculations';
 
 const STATUS_COLUMNS: ProjectStatus[] = ['planning', 'in-progress', 'testing', 'completed'];
 
@@ -20,7 +21,7 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-// ============ 项目详情弹窗 ============
+// ============ 项目详情弹窗（新逻辑）============
 function ProjectDetailModal({ project, onSave, onClose }: {
   project: Project;
   onSave: (p: Project) => void;
@@ -29,31 +30,52 @@ function ProjectDetailModal({ project, onSave, onClose }: {
   const [phases, setPhases] = useState<ProjectPhase[]>(project.phases);
   const [techStack, setTechStack] = useState(project.techStack);
 
-  function togglePhase(phaseId: string) {
+  // 切换阶段完成状态（仅 included 的阶段响应点击）
+  function togglePhaseComplete(phaseId: string) {
     setPhases(prev => prev.map(p => {
-      if (p.id !== phaseId) return p;
-      const next: ProjectPhase = {
+      if (p.id !== phaseId || !p.included) return p;
+      const done = p.status !== 'completed';
+      return {
         ...p,
-        status: p.status === 'completed' ? 'pending'
-          : p.status === 'pending' ? 'in-progress'
-          : 'completed',
-        completedAt: p.status === 'in-progress' ? new Date().toISOString() : undefined,
-        startedAt: p.status === 'pending' ? new Date().toISOString() : p.startedAt,
+        status: done ? 'completed' : 'pending',
+        completedAt: done ? new Date().toISOString() : undefined,
+        startedAt: done && !p.startedAt ? new Date().toISOString() : p.startedAt,
       };
-      return next;
+    }));
+  }
+
+  // 切换阶段是否纳入（非固定阶段可取消勾选）
+  function togglePhaseIncluded(phaseId: string) {
+    setPhases(prev => prev.map(p => {
+      if (p.id !== phaseId || p.isFixed) return p;
+      return { ...p, included: !p.included, status: 'pending', completedAt: undefined };
     }));
   }
 
   function handleSave() {
-    const completed = phases.filter(p => p.status === 'completed').length;
-    const progress = phases.length ? Math.round((completed / phases.length) * 100) : 0;
+    const progress = calcProjectProgress(phases);
+    const allIncludedDone = phases.filter(p => p.included).every(p => p.status === 'completed');
+    const hasStarted = phases.some(p => p.included && p.status !== 'pending');
+
+    // 自动判断项目状态
     let status: ProjectStatus = project.status;
-    if (progress === 100) status = 'completed';
-    else if (progress > 0) status = 'in-progress';
+    if (allIncludedDone && phases.filter(p => p.included).length > 0) {
+      status = 'completed';
+    } else if (hasStarted) {
+      // 如果测试阶段以前的阶段全完成，进入测试中
+      const devPhases = phases.filter(p => p.included && !p.isFixed);
+      const allDevDone = devPhases.length > 0 && devPhases.every(p => p.status === 'completed');
+      status = allDevDone ? 'testing' : 'in-progress';
+    } else {
+      status = 'planning';
+    }
 
     onSave({ ...project, phases, techStack, progress, status, updatedAt: new Date().toISOString() });
     onClose();
   }
+
+  const includedCount = phases.filter(p => p.included).length;
+  const completedCount = phases.filter(p => p.included && p.status === 'completed').length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={onClose}>
@@ -61,32 +83,81 @@ function ProjectDetailModal({ project, onSave, onClose }: {
         <h2 className="text-lg font-semibold text-gray-900 mb-1">{project.name}</h2>
         <p className="text-sm text-gray-500 mb-4">{project.description}</p>
 
-        {/* 阶段列表 */}
+        {/* 阶段管理 */}
         <div className="mb-4">
-          <label className="label">开发阶段（点击切换状态）</label>
-          <div className="space-y-2">
-            {phases.map(phase => (
-              <div
-                key={phase.id}
-                className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                  phase.status === 'completed' ? 'border-green-200 bg-green-50'
-                  : phase.status === 'in-progress' ? 'border-blue-200 bg-blue-50'
-                  : 'border-gray-200 hover:bg-gray-50'
-                }`}
-                onClick={() => togglePhase(phase.id)}
-              >
-                <span className="text-lg">
-                  {phase.status === 'completed' ? '✅' : phase.status === 'in-progress' ? '▶️' : '⬜'}
-                </span>
-                <span className={`text-sm font-medium ${
-                  phase.status === 'completed' ? 'text-green-700 line-through' : 'text-gray-800'
-                }`}>{phase.name}</span>
-                <span className="ml-auto text-xs text-gray-400">
-                  {phase.status === 'completed' ? '已完成' : phase.status === 'in-progress' ? '进行中' : '待开始'}
-                </span>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-2">
+            <label className="label mb-0">开发阶段</label>
+            <span className="text-xs text-gray-400">{completedCount}/{includedCount} 已完成</span>
           </div>
+
+          {/* 说明 */}
+          <p className="text-xs text-gray-400 mb-3">
+            ☑ 勾选的阶段才纳入进度计算 · 点击完成状态切换 · 测试&发布为固定阶段
+          </p>
+
+          <div className="space-y-2">
+            {phases.map((phase) => {
+              const isLastTwo = phase.isFixed;
+              const isIncluded = phase.included;
+              return (
+                <div
+                  key={phase.id}
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                    !isIncluded ? 'border-gray-100 bg-gray-50 opacity-50'
+                    : phase.status === 'completed' ? 'border-green-200 bg-green-50'
+                    : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  {/* 勾选框（是否纳入该阶段） */}
+                  <button
+                    className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                      isLastTwo
+                        ? 'border-indigo-300 bg-indigo-50 cursor-not-allowed'
+                        : isIncluded
+                        ? 'border-indigo-500 bg-indigo-500'
+                        : 'border-gray-300'
+                    }`}
+                    onClick={() => togglePhaseIncluded(phase.id)}
+                    title={isLastTwo ? '固定阶段，不可取消' : isIncluded ? '点击排除此阶段' : '点击纳入此阶段'}
+                  >
+                    {(isIncluded || isLastTwo) && (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </button>
+
+                  {/* 阶段名称 */}
+                  <span className={`text-sm font-medium flex-1 ${
+                    !isIncluded ? 'text-gray-400 line-through'
+                    : phase.status === 'completed' ? 'text-green-700' : 'text-gray-800'
+                  }`}>
+                    {phase.name}
+                    {isLastTwo && <span className="ml-1 text-xs text-indigo-400">(固定)</span>}
+                  </span>
+
+                  {/* 完成切换按钮（仅 included 阶段） */}
+                  {isIncluded && (
+                    <button
+                      onClick={() => togglePhaseComplete(phase.id)}
+                      className={`text-xs px-2 py-1 rounded-md border transition-colors ${
+                        phase.status === 'completed'
+                          ? 'border-green-300 bg-green-100 text-green-700 hover:bg-green-200'
+                          : 'border-gray-200 text-gray-500 hover:bg-gray-100'
+                      }`}
+                    >
+                      {phase.status === 'completed' ? '✓ 已完成' : '标记完成'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 进度预览 */}
+        <div className="mb-5 p-3 bg-gray-50 rounded-lg">
+          <ProgressBar value={calcProjectProgress(phases)} />
         </div>
 
         {/* 技术栈 */}
@@ -120,26 +191,10 @@ function CreateProjectModal({ onSave, onClose }: { onSave: (p: Project) => void;
   const [desc, setDesc] = useState('');
   const [cat, setCat] = useState<IdeaCategory>('app');
 
-  const getDefaultPhases = (category: IdeaCategory): ProjectPhase[] => {
-    const templates: Record<string, string[]> = {
-      app: ['需求分析', 'UI设计', '前端开发', '后端开发', '测试', '发布'],
-      web: ['原型设计', '前端开发', '后端集成', '测试', '部署'],
-      'mini-program': ['原型设计', '前端开发', '接口联调', '测试', '审核发布'],
-      agent: ['Prompt设计', '功能开发', '测试调优', '集成部署'],
-      tool: ['方案设计', '核心开发', '测试', '文档'],
-      content: ['内容策划', '生产制作', '发布推广', '复盘优化'],
-      hardware: ['方案设计', '原型制作', '测试验证', '量产'],
-      other: ['规划设计', '开发实现', '测试验证', '发布'],
-    };
-    return (templates[category] || templates.other).map(n => ({
-      id: uuidv4(), name: n, description: '', status: 'pending',
-    }));
-  };
-
   function handleCreate() {
     if (!name.trim()) return;
     const now = new Date().toISOString();
-    const phases = getDefaultPhases(cat);
+    const phases = getDefaultPhases(cat, uuidv4);
     onSave({
       id: uuidv4(), name: name.trim(), description: desc.trim(),
       category: cat, status: 'planning',
@@ -200,7 +255,10 @@ function ProjectCard({ project, onClick, onDelete }: {
       )}
       <ProgressBar value={project.progress} />
       <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
-        <span>{project.phases.filter(p => p.status === 'completed').length}/{project.phases.length} 阶段</span>
+        <span>
+          {project.phases.filter(p => p.included !== false && p.status === 'completed').length}/
+          {project.phases.filter(p => p.included !== false).length} 阶段
+        </span>
         <div className="flex items-center gap-2">
           <span>{timeAgo(project.updatedAt)}</span>
           <button
@@ -215,13 +273,27 @@ function ProjectCard({ project, onClick, onDelete }: {
 
 // ============ 主页面 ============
 export default function Phase2Page() {
-  const { state, saveProject, removeProject } = useApp();
+  const { state, saveProject, removeProject, navigate } = useApp();
   const { projects } = state;
 
   const [showCreate, setShowCreate] = useState(false);
   const [detailProject, setDetailProject] = useState<Project | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const [toast, setToast] = useState('');
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(''), 4000);
+  }
+
+  async function handleSaveProject(p: Project) {
+    const wasComplete = state.projects.find(x => x.id === p.id)?.status === 'completed';
+    await saveProject(p);
+    if (p.status === 'completed' && !wasComplete) {
+      showToast(`🎉 "${p.name}" 已完成，已自动添加到 GTM！`);
+    }
+  }
 
   const filtered = projects.filter(p => {
     if (filterStatus !== 'all' && p.status !== filterStatus) return false;
@@ -304,9 +376,17 @@ export default function Phase2Page() {
       {detailProject && (
         <ProjectDetailModal
           project={detailProject}
-          onSave={saveProject}
+          onSave={p => { handleSaveProject(p); setDetailProject(null); }}
           onClose={() => setDetailProject(null)}
         />
+      )}
+
+      {/* Toast 通知 */}
+      {toast && (
+        <div className="fixed bottom-12 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+          <span>{toast}</span>
+          <button className="text-white/60 hover:text-white ml-2" onClick={() => navigate('phase3')}>前往 GTM →</button>
+        </div>
       )}
     </div>
   );

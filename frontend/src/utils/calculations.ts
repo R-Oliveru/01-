@@ -9,10 +9,11 @@ export function calcWeightedScore(scores: Omit<AIScores, 'overall'>): number {
   ).toFixed(1);
 }
 
-export function calcProjectProgress(phases: Array<{ status: string }>): number {
-  if (phases.length === 0) return 0;
-  const done = phases.filter(p => p.status === 'completed').length;
-  return Math.round((done / phases.length) * 100);
+export function calcProjectProgress(phases: Array<{ status: string; included?: boolean }>): number {
+  const active = phases.filter(p => p.included !== false); // included 默认为 true
+  if (active.length === 0) return 0;
+  const done = active.filter(p => p.status === 'completed').length;
+  return Math.round((done / active.length) * 100);
 }
 
 export function formatNumber(n: number): string {

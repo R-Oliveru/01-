@@ -264,13 +264,14 @@ export default function Phase1Page() {
     setScoring(true);
     try {
       const { scores, feedback } = await scoreIdea(idea.title, idea.description, idea.category);
+      // forceUpdate=true：避免闭包导致重复新增
       await saveIdea({
         ...idea,
         aiScores: scores,
         aiFeedback: feedback,
         aiScoredAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      });
+      }, true);
     } catch (e: any) {
       setScoreError(e.message || 'AI 评分失败，可稍后手动评分');
     } finally {

@@ -126,7 +126,7 @@ interface AppContextValue {
   dispatch: React.Dispatch<AppAction>;
   navigate: (page: PageKey) => void;
   // Convenience helpers
-  saveIdea: (idea: Idea) => Promise<void>;
+  saveIdea: (idea: Idea, forceUpdate?: boolean) => Promise<void>;
   removeIdea: (id: string) => Promise<void>;
   saveProject: (project: Project) => Promise<void>;
   removeProject: (id: string) => Promise<void>;
@@ -195,11 +195,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // Idea helpers
-  const saveIdea = useCallback(async (idea: Idea) => {
-    const exists = state.ideas.find(i => i.id === idea.id);
+  // Idea helpers — forceUpdate=true 时强制走 UPDATE（避免闭包导致重复新增）
+  const saveIdea = useCallback(async (idea: Idea, forceUpdate = false) => {
     await db.addIdea(idea);
-    dispatch({ type: exists ? 'UPDATE_IDEA' : 'ADD_IDEA', payload: idea });
+    const alreadyExists = forceUpdate || state.ideas.some(i => i.id === idea.id);
+    dispatch({ type: alreadyExists ? 'UPDATE_IDEA' : 'ADD_IDEA', payload: idea });
   }, [state.ideas]);
 
   const removeIdea = useCallback(async (id: string) => {
@@ -213,7 +213,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const exists = state.projects.find(p => p.id === project.id);
     await db.addProject(withProgress);
     dispatch({ type: exists ? 'UPDATE_PROJECT' : 'ADD_PROJECT', payload: withProgress });
-  }, [state.projects]);
+
+    // 项目完成时，自动在 GTM 创建对应产品（若尚不存在）
+    if (withProgress.status === 'completed') {
+      const alreadyInGTM = state.products.some(p => p.projectId === project.id);
+      if (!alreadyInGTM) {
+        const { v4: uuidv4 } = await import('uuid');
+        const DEFAULT_CHECKLIST = [
+          '确定最终产品名称', '注册域名/上架应用商店',
+          '完善首页和介绍页', '建立用户反馈渠道', '接入数据分析工具',
+        ];
+        const now = new Date().toISOString();
+        const product: Product = {
+          id: uuidv4(),
+          projectId: project.id,
+          name: project.name,
+          description: project.description,
+          category: project.category,
+          status: 'pre-launch',
+          launchChecklist: DEFAULT_CHECKLIST.map(item => ({ id: uuidv4(), item, completed: false })),
+          userMetrics: { totalUsers: 0, lastUpdated: now },
+          financials: { revenue: 0, costs: 0, lastUpdated: now },
+          marketing: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        await db.addProduct(product);
+        dispatch({ type: 'ADD_PRODUCT', payload: product });
+      }
+    }
+  }, [state.projects, state.products]);
 
   const removeProject = useCallback(async (id: string) => {
     await db.deleteProject(id);
@@ -285,24 +314,37 @@ export function useApp() {
 }
 
 // ============ 辅助：默认阶段模板 ============
-function getDefaultPhases(category: string, uuid: () => string) {
-  const templates: Record<string, string[]> = {
-    app:           ['需求分析', 'UI设计', '前端开发', '后端开发', '测试', '发布'],
-    web:           ['原型设计', '前端开发', '后端集成', '测试', '部署'],
-    'mini-program':['原型设计', '前端开发', '接口联调', '测试', '审核发布'],
-    agent:         ['Prompt设计', '功能开发', '测试调优', '集成部署'],
-    tool:          ['方案设计', '核心开发', '测试', '文档'],
-    content:       ['内容策划', '生产制作', '发布推广', '复盘优化'],
-    hardware:      ['方案设计', '原型制作', '测试验证', '量产'],
-    other:         ['规划设计', '开发实现', '测试验证', '发布'],
+// 返回：可选开发阶段（included=true，可取消）+ 固定的"测试"和"发布"阶段
+export function getDefaultPhases(category: string, uuid: () => string) {
+  // 各分类的可选开发阶段（不含测试/发布，由固定阶段覆盖）
+  const devStages: Record<string, string[]> = {
+    app:            ['需求分析', 'UI设计', '前端开发', '后端开发'],
+    web:            ['原型设计', '前端开发', '后端集成'],
+    'mini-program': ['原型设计', '前端开发', '接口联调'],
+    agent:          ['Prompt设计', '功能开发'],
+    tool:           ['方案设计', '核心开发', '文档'],
+    content:        ['内容策划', '生产制作', '推广运营'],
+    hardware:       ['方案设计', '原型制作', '测试验证'],
+    other:          ['规划设计', '开发实现'],
   };
-  const names = templates[category] || templates.other;
-  return names.map(name => ({
+  const names = devStages[category] || devStages.other;
+
+  const devPhases = names.map(name => ({
     id: uuid(),
     name,
     description: '',
     status: 'pending' as const,
+    included: true,
+    isFixed: false,
   }));
+
+  // 固定阶段：测试 & 发布（永远存在，不可取消）
+  const fixedPhases = [
+    { id: uuid(), name: '测试', description: '', status: 'pending' as const, included: true, isFixed: true },
+    { id: uuid(), name: '发布 & 部署', description: '', status: 'pending' as const, included: true, isFixed: true },
+  ];
+
+  return [...devPhases, ...fixedPhases];
 }
 
 function getDefaultTechStack(category: string) {

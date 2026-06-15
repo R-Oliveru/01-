@@ -46,6 +46,8 @@ export interface ProjectPhase {
   name: string;
   description: string;
   status: PhaseStatus;
+  included: boolean;   // 是否纳入该项目（勾选的阶段才计算进度）
+  isFixed?: boolean;   // 固定阶段（测试/发布），不可取消勾选
   estimatedHours?: number;
   actualHours?: number;
   startedAt?: string;
