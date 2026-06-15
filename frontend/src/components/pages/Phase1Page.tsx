@@ -18,16 +18,20 @@ function ScoreBadge({ score }: { score: number }) {
 }
 
 // ============ 点子卡片 ============
-function IdeaCard({ idea, onReview, onDelete, onConvert }: {
+function IdeaCard({ idea, onReview, onDelete, onConvert, isAdmin, currentUserId }: {
   idea: Idea;
   onReview: (idea: Idea) => void;
   onDelete: (id: string) => void;
   onConvert: (idea: Idea) => void;
+  isAdmin: boolean;
+  currentUserId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const cat = CATEGORY_MAP[idea.category];
   const review = idea.manualReview;
   const statusInfo = review ? REVIEW_STATUS_MAP[review.status] : null;
+  const canDelete = isAdmin || idea.createdBy === currentUserId;
+  const canConvert = isAdmin || idea.createdBy === currentUserId;
 
   return (
     <div className="card p-4 hover:shadow-md transition-shadow">
@@ -103,17 +107,21 @@ function IdeaCard({ idea, onReview, onDelete, onConvert }: {
               <button className="btn-ghost text-xs py-1" onClick={() => setExpanded(v => !v)}>
                 {expanded ? '收起' : '展开'}
               </button>
-              <button className="btn-ghost text-xs py-1 text-indigo-600" onClick={() => onReview(idea)}>
-                验证
-              </button>
-              {review?.status === 'approved' && (
+              {isAdmin && (
+                <button className="btn-ghost text-xs py-1 text-indigo-600" onClick={() => onReview(idea)}>
+                  验证
+                </button>
+              )}
+              {review?.status === 'approved' && canConvert && (
                 <button className="btn-ghost text-xs py-1 text-green-600" onClick={() => onConvert(idea)}>
                   → 开发
                 </button>
               )}
-              <button className="btn-ghost text-xs py-1 text-red-500" onClick={() => onDelete(idea.id)}>
-                删除
-              </button>
+              {canDelete && (
+                <button className="btn-ghost text-xs py-1 text-red-500" onClick={() => onDelete(idea.id)}>
+                  删除
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -223,7 +231,7 @@ function ReviewModal({ idea, onSave, onClose }: {
 // ============ 主页面 ============
 export default function Phase1Page() {
   const { state, saveIdea, updateIdeaReview, removeIdea, convertIdeaToProject, navigate } = useApp();
-  const { profile } = useAuth();
+  const { profile, isAdmin } = useAuth();
   const { ideas } = state;
 
   // 表单状态
@@ -428,6 +436,8 @@ export default function Phase1Page() {
               onReview={setReviewIdea}
               onDelete={removeIdea}
               onConvert={handleConvert}
+              isAdmin={isAdmin}
+              currentUserId={profile?.id}
             />
           ))}
         </div>

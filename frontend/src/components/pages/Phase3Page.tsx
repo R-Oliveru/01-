@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useApp } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
 import type { Product, ProductStatus, IdeaCategory, MarketingRecord } from '../../types';
 import { CATEGORY_MAP, PRODUCT_STATUS_MAP } from '../../utils/constants';
 import { formatNumber, formatCurrency, timeAgo } from '../../utils/calculations';
@@ -19,7 +20,7 @@ const DEFAULT_CHECKLIST = [
 function ProductCard({ product, onClick, onDelete }: {
   product: Product;
   onClick: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const cat = CATEGORY_MAP[product.category];
   const statusInfo = PRODUCT_STATUS_MAP[product.status];
@@ -53,17 +54,20 @@ function ProductCard({ product, onClick, onDelete }: {
       </div>
       <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
         <span>{product.launchedAt ? `上线 ${timeAgo(product.launchedAt)}` : '准备中'}</span>
-        <button className="text-red-400 hover:text-red-600" onClick={e => { e.stopPropagation(); onDelete(); }}>删除</button>
+        {onDelete && (
+          <button className="text-red-400 hover:text-red-600" onClick={e => { e.stopPropagation(); onDelete(); }}>删除</button>
+        )}
       </div>
     </div>
   );
 }
 
 // ============ 产品详情弹窗 ============
-function ProductDetailModal({ product, onSave, onClose }: {
+function ProductDetailModal({ product, onSave, onClose, canEdit }: {
   product: Product;
   onSave: (p: Product) => void;
   onClose: () => void;
+  canEdit: boolean;
 }) {
   const [tab, setTab] = useState<'basic' | 'market' | 'users' | 'finance'>('basic');
   const [data, setData] = useState(product);
@@ -316,8 +320,8 @@ function ProductDetailModal({ product, onSave, onClose }: {
         </div>
 
         <div className="flex gap-2 justify-end p-6 pt-4 border-t border-gray-100">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-primary" onClick={handleSave}>保存</button>
+          <button className="btn-secondary" onClick={onClose}>{canEdit ? '取消' : '关闭'}</button>
+          {canEdit && <button className="btn-primary" onClick={handleSave}>保存</button>}
         </div>
       </div>
     </div>
@@ -429,12 +433,20 @@ function GrowthTemplateSection() {
 // ============ 主页面 ============
 export default function Phase3Page() {
   const { state, saveProduct, removeProduct } = useApp();
+  const { profile, isAdmin } = useAuth();
   const { products } = state;
 
   const [showCreate, setShowCreate] = useState(false);
   const [detailProduct, setDetailProduct] = useState<Product | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [search, setSearch] = useState('');
+
+  function canEditProduct(p: Product): boolean {
+    return isAdmin || p.createdBy === profile?.id;
+  }
+  function canDeleteProduct(p: Product): boolean {
+    return isAdmin || p.createdBy === profile?.id;
+  }
 
   const filtered = products.filter(p => {
     if (filterStatus !== 'all' && p.status !== filterStatus) return false;
@@ -497,7 +509,11 @@ export default function Phase3Page() {
                 <span className="text-xs text-gray-400">({grouped[col].length})</span>
               </div>
               {grouped[col].map(p => (
-                <ProductCard key={p.id} product={p} onClick={() => setDetailProduct(p)} onDelete={() => removeProduct(p.id)} />
+                <ProductCard
+                  key={p.id} product={p}
+                  onClick={() => setDetailProduct(p)}
+                  onDelete={canDeleteProduct(p) ? () => removeProduct(p.id) : undefined}
+                />
               ))}
               {grouped[col].length === 0 && (
                 <div className="card p-4 text-center text-gray-300 text-xs border-dashed">暂无产品</div>
@@ -509,7 +525,12 @@ export default function Phase3Page() {
 
       {showCreate && <CreateProductModal onSave={saveProduct} onClose={() => setShowCreate(false)} />}
       {detailProduct && (
-        <ProductDetailModal product={detailProduct} onSave={saveProduct} onClose={() => setDetailProduct(null)} />
+        <ProductDetailModal
+          product={detailProduct}
+          canEdit={canEditProduct(detailProduct)}
+          onSave={saveProduct}
+          onClose={() => setDetailProduct(null)}
+        />
       )}
     </div>
   );

@@ -4,6 +4,17 @@ import type {
   DBChecklistItem, DBMarketingRecord, DBGrowthTemplate, DBProfile, DBInviteCode
 } from '../lib/supabase';
 
+// ============ App Settings（AI Key 等全局配置）============
+
+export async function getAppSetting(key: string): Promise<string | null> {
+  const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle();
+  return data?.value ?? null;
+}
+
+export async function setAppSetting(key: string, value: string, updatedBy: string): Promise<void> {
+  await supabase.from('app_settings').upsert({ key, value, updated_by: updatedBy, updated_at: new Date().toISOString() });
+}
+
 // ============ 用户 / Auth ============
 
 export async function getCurrentUser() {

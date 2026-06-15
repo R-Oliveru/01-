@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useApp } from '../../context/AppContext';
 import { getDefaultPhases } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
+import { getAllProfiles } from '../../utils/api';
 import type { Project, ProjectStatus, ProjectPhase, IdeaCategory } from '../../types';
+import type { DBProfile } from '../../lib/supabase';
 import { CATEGORY_MAP, PROJECT_STATUS_MAP } from '../../utils/constants';
 import { timeAgo, calcProjectProgress } from '../../utils/calculations';
 
@@ -22,10 +25,12 @@ function ProgressBar({ value }: { value: number }) {
 }
 
 // ============ 项目详情弹窗（新逻辑）============
-function ProjectDetailModal({ project, onSave, onClose }: {
+function ProjectDetailModal({ project, onSave, onClose, canEdit, profiles }: {
   project: Project;
-  onSave: (p: Project) => void;
+  onSave: (p: Project) => Promise<void>;
   onClose: () => void;
+  canEdit: boolean;
+  profiles: DBProfile[];
 }) {
   const [phases, setPhases] = useState<ProjectPhase[]>(project.phases);
   const [techStack, setTechStack] = useState(project.techStack);
@@ -52,7 +57,9 @@ function ProjectDetailModal({ project, onSave, onClose }: {
     }));
   }
 
-  function handleSave() {
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
     const progress = calcProjectProgress(phases);
     const allIncludedDone = phases.filter(p => p.included).every(p => p.status === 'completed');
     const hasStarted = phases.some(p => p.included && p.status !== 'pending');
@@ -62,7 +69,6 @@ function ProjectDetailModal({ project, onSave, onClose }: {
     if (allIncludedDone && phases.filter(p => p.included).length > 0) {
       status = 'completed';
     } else if (hasStarted) {
-      // 如果测试阶段以前的阶段全完成，进入测试中
       const devPhases = phases.filter(p => p.included && !p.isFixed);
       const allDevDone = devPhases.length > 0 && devPhases.every(p => p.status === 'completed');
       status = allDevDone ? 'testing' : 'in-progress';
@@ -70,8 +76,13 @@ function ProjectDetailModal({ project, onSave, onClose }: {
       status = 'planning';
     }
 
-    onSave({ ...project, phases, techStack, progress, status, updatedAt: new Date().toISOString() });
-    onClose();
+    setSaving(true);
+    try {
+      await onSave({ ...project, phases, techStack, progress, status, updatedAt: new Date().toISOString() });
+    } finally {
+      setSaving(false);
+      onClose();
+    }
   }
 
   const includedCount = phases.filter(p => p.included).length;
@@ -81,7 +92,16 @@ function ProjectDetailModal({ project, onSave, onClose }: {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg my-8 p-6" onClick={e => e.stopPropagation()}>
         <h2 className="text-lg font-semibold text-gray-900 mb-1">{project.name}</h2>
-        <p className="text-sm text-gray-500 mb-4">{project.description}</p>
+        <p className="text-sm text-gray-500 mb-1">{project.description}</p>
+        {project.createdByUsername && (
+          <p className="text-xs text-gray-400 mb-4">创建者：{project.createdByUsername}</p>
+        )}
+
+        {!canEdit && (
+          <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            👁 你没有编辑权限，仅可查看。请联系管理员分配负责人。
+          </div>
+        )}
 
         {/* 阶段管理 */}
         <div className="mb-4">
@@ -89,65 +109,90 @@ function ProjectDetailModal({ project, onSave, onClose }: {
             <label className="label mb-0">开发阶段</label>
             <span className="text-xs text-gray-400">{completedCount}/{includedCount} 已完成</span>
           </div>
-
-          {/* 说明 */}
           <p className="text-xs text-gray-400 mb-3">
-            ☑ 勾选的阶段才纳入进度计算 · 点击完成状态切换 · 测试&发布为固定阶段
+            ☑ 勾选阶段纳入进度 · 测试&发布为固定阶段 · 管理员可指定每阶段负责人
           </p>
 
           <div className="space-y-2">
             {phases.map((phase) => {
-              const isLastTwo = phase.isFixed;
               const isIncluded = phase.included;
+              const assignee = profiles.find(p => p.id === phase.assigneeId);
               return (
                 <div
                   key={phase.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                  className={`p-3 rounded-lg border transition-colors ${
                     !isIncluded ? 'border-gray-100 bg-gray-50 opacity-50'
                     : phase.status === 'completed' ? 'border-green-200 bg-green-50'
                     : 'border-gray-200 bg-white'
                   }`}
                 >
-                  {/* 勾选框（是否纳入该阶段） */}
-                  <button
-                    className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                      isLastTwo
-                        ? 'border-indigo-300 bg-indigo-50 cursor-not-allowed'
-                        : isIncluded
-                        ? 'border-indigo-500 bg-indigo-500'
-                        : 'border-gray-300'
-                    }`}
-                    onClick={() => togglePhaseIncluded(phase.id)}
-                    title={isLastTwo ? '固定阶段，不可取消' : isIncluded ? '点击排除此阶段' : '点击纳入此阶段'}
-                  >
-                    {(isIncluded || isLastTwo) && (
-                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </button>
-
-                  {/* 阶段名称 */}
-                  <span className={`text-sm font-medium flex-1 ${
-                    !isIncluded ? 'text-gray-400 line-through'
-                    : phase.status === 'completed' ? 'text-green-700' : 'text-gray-800'
-                  }`}>
-                    {phase.name}
-                    {isLastTwo && <span className="ml-1 text-xs text-indigo-400">(固定)</span>}
-                  </span>
-
-                  {/* 完成切换按钮（仅 included 阶段） */}
-                  {isIncluded && (
+                  <div className="flex items-center gap-3">
+                    {/* 勾选框 */}
                     <button
-                      onClick={() => togglePhaseComplete(phase.id)}
-                      className={`text-xs px-2 py-1 rounded-md border transition-colors ${
-                        phase.status === 'completed'
-                          ? 'border-green-300 bg-green-100 text-green-700 hover:bg-green-200'
-                          : 'border-gray-200 text-gray-500 hover:bg-gray-100'
+                      disabled={!canEdit || phase.isFixed}
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                        phase.isFixed ? 'border-indigo-300 bg-indigo-50 cursor-not-allowed'
+                        : !canEdit ? 'cursor-not-allowed opacity-50 border-gray-300'
+                        : isIncluded ? 'border-indigo-500 bg-indigo-500'
+                        : 'border-gray-300'
                       }`}
+                      onClick={() => canEdit && !phase.isFixed && togglePhaseIncluded(phase.id)}
                     >
-                      {phase.status === 'completed' ? '✓ 已完成' : '标记完成'}
+                      {(isIncluded || phase.isFixed) && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
                     </button>
+
+                    {/* 阶段名称 */}
+                    <span className={`text-sm font-medium flex-1 ${
+                      !isIncluded ? 'text-gray-400 line-through'
+                      : phase.status === 'completed' ? 'text-green-700' : 'text-gray-800'
+                    }`}>
+                      {phase.name}
+                      {phase.isFixed && <span className="ml-1 text-xs text-indigo-400">(固定)</span>}
+                    </span>
+
+                    {/* 完成切换 */}
+                    {isIncluded && canEdit && (
+                      <button
+                        onClick={() => togglePhaseComplete(phase.id)}
+                        className={`text-xs px-2 py-1 rounded-md border transition-colors ${
+                          phase.status === 'completed'
+                            ? 'border-green-300 bg-green-100 text-green-700 hover:bg-green-200'
+                            : 'border-gray-200 text-gray-500 hover:bg-gray-100'
+                        }`}
+                      >
+                        {phase.status === 'completed' ? '✓ 已完成' : '标记完成'}
+                      </button>
+                    )}
+                    {isIncluded && !canEdit && phase.status === 'completed' && (
+                      <span className="text-xs text-green-600">✓ 已完成</span>
+                    )}
+                  </div>
+
+                  {/* 负责人指派（仅管理员可改，所有人可看） */}
+                  {isIncluded && (
+                    <div className="flex items-center gap-2 mt-2 pl-8">
+                      <span className="text-xs text-gray-400">负责人：</span>
+                      {canEdit && profiles.length > 0 ? (
+                        <select
+                          className="text-xs border border-gray-200 rounded px-1.5 py-0.5 bg-white"
+                          value={phase.assigneeId || ''}
+                          onChange={e => setPhases(prev => prev.map(p =>
+                            p.id === phase.id ? { ...p, assigneeId: e.target.value || undefined } : p
+                          ))}
+                        >
+                          <option value="">未指派</option>
+                          {profiles.map(m => (
+                            <option key={m.id} value={m.id}>{m.username}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs text-gray-600">{assignee?.username || '未指派'}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               );
@@ -167,9 +212,10 @@ function ProjectDetailModal({ project, onSave, onClose }: {
             <div key={key} className="flex items-center gap-2">
               <span className="text-xs text-gray-500 w-16">{key === 'frontend' ? '前端' : key === 'backend' ? '后端' : '数据库'}</span>
               <input
-                className="input text-sm py-1.5"
+                className={`input text-sm py-1.5 ${!canEdit ? 'bg-gray-50 cursor-not-allowed' : ''}`}
                 value={techStack[key] || ''}
-                onChange={e => setTechStack(prev => ({ ...prev, [key]: e.target.value }))}
+                onChange={e => canEdit && setTechStack(prev => ({ ...prev, [key]: e.target.value }))}
+                readOnly={!canEdit}
                 placeholder={`${key}...`}
               />
             </div>
@@ -177,8 +223,12 @@ function ProjectDetailModal({ project, onSave, onClose }: {
         </div>
 
         <div className="flex gap-2 justify-end">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-primary" onClick={handleSave}>保存进度</button>
+          <button className="btn-secondary" onClick={onClose}>关闭</button>
+          {canEdit && (
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? '保存中...' : '保存进度'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -239,7 +289,7 @@ function CreateProjectModal({ onSave, onClose }: { onSave: (p: Project) => void;
 function ProjectCard({ project, onClick, onDelete }: {
   project: Project;
   onClick: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const cat = CATEGORY_MAP[project.category];
   const statusInfo = PROJECT_STATUS_MAP[project.status];
@@ -261,10 +311,12 @@ function ProjectCard({ project, onClick, onDelete }: {
         </span>
         <div className="flex items-center gap-2">
           <span>{timeAgo(project.updatedAt)}</span>
-          <button
-            className="text-red-400 hover:text-red-600 transition-colors"
-            onClick={e => { e.stopPropagation(); onDelete(); }}
-          >删除</button>
+          {onDelete && (
+            <button
+              className="text-red-400 hover:text-red-600 transition-colors"
+              onClick={e => { e.stopPropagation(); onDelete(); }}
+            >删除</button>
+          )}
         </div>
       </div>
     </div>
@@ -274,6 +326,7 @@ function ProjectCard({ project, onClick, onDelete }: {
 // ============ 主页面 ============
 export default function Phase2Page() {
   const { state, saveProject, removeProject, navigate } = useApp();
+  const { profile, isAdmin } = useAuth();
   const { projects } = state;
 
   const [showCreate, setShowCreate] = useState(false);
@@ -281,6 +334,22 @@ export default function Phase2Page() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState('');
+  const [profiles, setProfiles] = useState<DBProfile[]>([]);
+
+  // 加载成员列表（用于负责人指派）
+  useState(() => { getAllProfiles().then(setProfiles); });
+
+  // 判断当前用户是否有编辑某项目的权限
+  function canEditProject(p: Project): boolean {
+    if (isAdmin) return true;
+    if (p.createdBy === profile?.id) return true;
+    // 是某个阶段的负责人
+    return p.phases.some(ph => ph.assigneeId === profile?.id);
+  }
+
+  function canDeleteProject(p: Project): boolean {
+    return isAdmin || p.createdBy === profile?.id;
+  }
 
   function showToast(msg: string) {
     setToast(msg);
@@ -358,7 +427,7 @@ export default function Phase2Page() {
                     key={p.id}
                     project={p}
                     onClick={() => setDetailProject(p)}
-                    onDelete={() => removeProject(p.id)}
+                    onDelete={canDeleteProject(p) ? () => removeProject(p.id) : undefined}
                   />
                 ))}
                 {colProjects.length === 0 && (
@@ -376,7 +445,9 @@ export default function Phase2Page() {
       {detailProject && (
         <ProjectDetailModal
           project={detailProject}
-          onSave={p => { handleSaveProject(p); setDetailProject(null); }}
+          canEdit={canEditProject(detailProject)}
+          profiles={profiles}
+          onSave={async p => { await handleSaveProject(p); setDetailProject(null); }}
           onClose={() => setDetailProject(null)}
         />
       )}

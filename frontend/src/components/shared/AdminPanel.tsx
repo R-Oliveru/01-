@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { createInviteCode, getInviteCodes, getAllProfiles } from '../../utils/api';
-import { getAPIKey, setAPIKey } from '../../utils/aiScoring';
+import { createInviteCode, getInviteCodes, getAllProfiles, getAppSetting, setAppSetting } from '../../utils/api';
 import type { DBInviteCode, DBProfile } from '../../lib/supabase';
 
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
@@ -10,13 +9,19 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const [codes, setCodes] = useState<DBInviteCode[]>([]);
   const [members, setMembers] = useState<DBProfile[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [apiKey, setKey] = useState(getAPIKey);
+  const [apiKey, setKey] = useState('');
   const [keySaved, setKeySaved] = useState(false);
 
   useEffect(() => {
     if (tab === 'invite') loadCodes();
     if (tab === 'members') loadMembers();
+    if (tab === 'ai') loadAIKey();
   }, [tab]);
+
+  async function loadAIKey() {
+    const k = await getAppSetting('deepseek_api_key');
+    if (k) setKey(k);
+  }
 
   async function loadCodes() {
     const data = await getInviteCodes();
@@ -41,8 +46,9 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function saveApiKey() {
-    setAPIKey(apiKey.trim());
+  async function saveApiKey() {
+    if (!profile) return;
+    await setAppSetting('deepseek_api_key', apiKey.trim(), profile.id);
     setKeySaved(true);
     setTimeout(() => setKeySaved(false), 2000);
   }

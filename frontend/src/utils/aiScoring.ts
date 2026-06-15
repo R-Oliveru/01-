@@ -1,14 +1,21 @@
 import type { AIScores } from '../types';
 import { calcWeightedScore } from './calculations';
+import { getAppSetting } from './api';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 
-export function getAPIKey(): string {
-  return localStorage.getItem('deepseek_api_key') || '';
+// 从 Supabase 读取团队共享 Key（管理员统一配置）
+export async function getAPIKey(): Promise<string> {
+  const dbKey = await getAppSetting('deepseek_api_key');
+  return dbKey || '';
 }
 
-export function setAPIKey(key: string): void {
-  localStorage.setItem('deepseek_api_key', key);
+// 管理员保存时写入 Supabase（由 AdminPanel 调用）
+export { setAppSetting as saveAPIKeyToDb } from './api';
+
+// 兼容旧的同步读取（Footer 显示用）
+export function getLocalAPIKey(): string {
+  return localStorage.getItem('deepseek_api_key_cache') || '';
 }
 
 export async function scoreIdea(
@@ -16,8 +23,8 @@ export async function scoreIdea(
   description: string,
   category: string
 ): Promise<{ scores: AIScores; feedback: string }> {
-  const apiKey = getAPIKey();
-  if (!apiKey) throw new Error('请先配置 DeepSeek API Key');
+  const apiKey = await getAPIKey();
+  if (!apiKey) throw new Error('管理员尚未配置 DeepSeek API Key，请联系管理员');
 
   const prompt = `你是一位经验丰富的产品评审专家，请评估以下产品点子的潜力：
 
