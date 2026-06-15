@@ -409,7 +409,7 @@ function GrowthTemplateSection() {
               <div className="font-medium text-sm text-gray-900 mb-1">{tmpl.name}</div>
               <p className="text-xs text-gray-500 mb-2">{tmpl.description}</p>
               <div className="space-y-1">
-                {tmpl.steps.map(step => (
+                {tmpl.steps.map((step: { id: string; order: number; title: string; isFixed: boolean }) => (
                   <div key={step.id} className="flex items-center gap-2 text-xs text-gray-600">
                     <span className="w-4 h-4 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0">
                       {step.order}

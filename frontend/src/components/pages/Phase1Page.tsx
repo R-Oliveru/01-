@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { useApp } from '../../context/AppContext';
+import { useAuth } from '../../context/AuthContext';
 import type { Idea, IdeaCategory, ReviewStatus, Priority } from '../../types';
 import { scoreIdea } from '../../utils/aiScoring';
 import { CATEGORY_MAP, REVIEW_STATUS_MAP } from '../../utils/constants';
@@ -95,7 +95,10 @@ function IdeaCard({ idea, onReview, onDelete, onConvert }: {
 
           {/* 操作区 */}
           <div className="flex items-center justify-between mt-3">
-            <span className="text-xs text-gray-400">{timeAgo(idea.createdAt)}</span>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span>{timeAgo(idea.createdAt)}</span>
+              {idea.createdByUsername && <span>· {idea.createdByUsername}</span>}
+            </div>
             <div className="flex items-center gap-1">
               <button className="btn-ghost text-xs py-1" onClick={() => setExpanded(v => !v)}>
                 {expanded ? '收起' : '展开'}
@@ -219,7 +222,8 @@ function ReviewModal({ idea, onSave, onClose }: {
 
 // ============ 主页面 ============
 export default function Phase1Page() {
-  const { state, saveIdea, removeIdea, convertIdeaToProject, navigate } = useApp();
+  const { state, saveIdea, updateIdeaReview, removeIdea, convertIdeaToProject, navigate } = useApp();
+  const { profile } = useAuth();
   const { ideas } = state;
 
   // 表单状态
@@ -248,8 +252,9 @@ export default function Phase1Page() {
 
   async function handleSubmit() {
     if (!title.trim()) return;
+    // 先创建骨架，saveIdea 内部会写 DB 并返回真实 id
     const idea: Idea = {
-      id: uuidv4(),
+      id: '__new__',  // 占位，saveIdea 会更新为真实 id
       title: title.trim(),
       description: desc.trim(),
       category,
@@ -257,14 +262,13 @@ export default function Phase1Page() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await saveIdea(idea);
+    await saveIdea(idea);  // 写 DB，idea.id 被更新为真实 uuid
     setTitle(''); setDesc(''); setTags([]); setTagInput(''); setScoreError('');
 
-    // 自动 AI 评分
+    // 自动 AI 评分（仅创建时触发一次）
     setScoring(true);
     try {
       const { scores, feedback } = await scoreIdea(idea.title, idea.description, idea.category);
-      // forceUpdate=true：避免闭包导致重复新增
       await saveIdea({
         ...idea,
         aiScores: scores,
@@ -433,7 +437,16 @@ export default function Phase1Page() {
       {reviewIdea && (
         <ReviewModal
           idea={reviewIdea}
-          onSave={saveIdea}
+          onSave={async (updated) => {
+            if (!profile) return;
+            await updateIdeaReview(
+              updated.id,
+              updated.manualReview?.status || 'pending',
+              updated.manualReview?.priority || 'medium',
+              updated.manualReview?.notes || '',
+              profile.id,
+            );
+          }}
           onClose={() => setReviewIdea(null)}
         />
       )}

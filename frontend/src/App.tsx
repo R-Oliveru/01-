@@ -1,10 +1,13 @@
-import { AppProvider, useApp } from './context/AppContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { AppProvider } from './context/AppContext';
 import Header from './components/layout/Header';
 import Footer from './components/layout/Footer';
 import LandingPage from './components/pages/LandingPage';
 import Phase1Page from './components/pages/Phase1Page';
 import Phase2Page from './components/pages/Phase2Page';
 import Phase3Page from './components/pages/Phase3Page';
+import AuthPage from './components/pages/AuthPage';
+import { useApp } from './context/AppContext';
 
 function AppContent() {
   const { state } = useApp();
@@ -34,10 +37,33 @@ function AppContent() {
   );
 }
 
-export default function App() {
+function AuthGate() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="text-4xl mb-4 animate-bounce">🎯</div>
+          <div className="text-gray-500 text-sm">初始化中...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <AuthPage />;
+
   return (
     <AppProvider>
       <AppContent />
     </AppProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }

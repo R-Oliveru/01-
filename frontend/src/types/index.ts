@@ -30,6 +30,9 @@ export interface Idea {
     notes: string;
     reviewedAt: string;
   };
+  // 协作字段
+  createdBy?: string;
+  createdByUsername?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,8 +49,9 @@ export interface ProjectPhase {
   name: string;
   description: string;
   status: PhaseStatus;
-  included: boolean;   // 是否纳入该项目（勾选的阶段才计算进度）
-  isFixed?: boolean;   // 固定阶段（测试/发布），不可取消勾选
+  included: boolean;
+  isFixed?: boolean;
+  assigneeId?: string;
   estimatedHours?: number;
   actualHours?: number;
   startedAt?: string;
@@ -56,7 +60,7 @@ export interface ProjectPhase {
 
 export interface Project {
   id: string;
-  ideaId?: string;        // 关联的点子ID（可选，支持直接创建）
+  ideaId?: string;
   name: string;
   description: string;
   category: IdeaCategory;
@@ -68,7 +72,10 @@ export interface Project {
     database?: string;
     services?: string[];
   };
-  progress: number;       // 自动计算
+  progress: number;
+  // 协作字段
+  createdBy?: string;
+  createdByUsername?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -96,20 +103,8 @@ export interface MarketingRecord {
     cost?: number;
   };
   publishedAt: string;
-}
-
-export interface GrowthTemplate {
-  id: string;
-  name: string;
-  description: string;
-  isCustom: boolean;
-  steps: Array<{
-    id: string;
-    order: number;
-    title: string;
-    description: string;
-    isFixed: boolean;
-  }>;
+  createdBy?: string;
+  createdByUsername?: string;
 }
 
 export interface Product {
@@ -132,10 +127,29 @@ export interface Product {
     lastUpdated: string;
   };
   marketing: MarketingRecord[];
-  growthTemplateId?: string;  // 使用的增长模板
+  growthTemplateId?: string;
   launchedAt?: string;
+  // 协作字段
+  createdBy?: string;
+  createdByUsername?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ============ 增长方法论模板 ============
+
+export interface GrowthTemplate {
+  id: string;
+  name: string;
+  description: string;
+  isCustom: boolean;
+  steps: Array<{
+    id: string;
+    order: number;
+    title: string;
+    description: string;
+    isFixed: boolean;
+  }>;
 }
 
 // ============ 平台统计 ============
