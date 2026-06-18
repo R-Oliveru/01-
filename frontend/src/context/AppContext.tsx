@@ -208,7 +208,7 @@ interface AppContextValue {
   navigate: (page: PageKey) => void;
   reload: () => Promise<void>;
   // Idea
-  saveIdea: (idea: Idea, forceUpdate?: boolean) => Promise<void>;
+  saveIdea: (idea: Idea, forceUpdate?: boolean) => Promise<Idea>;
   updateIdeaReview: (ideaId: string, status: string, priority: string, notes: string, reviewedBy: string) => Promise<void>;
   removeIdea: (id: string) => Promise<void>;
   // Project
@@ -272,7 +272,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ============ Idea 操作 ============
-  const saveIdea = useCallback(async (idea: Idea, forceUpdate = false) => {
+  // 返回值：新建时返回带真实 id 的 Idea，更新时返回传入的 idea
+  const saveIdea = useCallback(async (idea: Idea, forceUpdate = false): Promise<Idea> => {
     const exists = forceUpdate || state.ideas.some(i => i.id === idea.id);
     if (exists) {
       await api.updateIdea(idea.id, {
@@ -287,6 +288,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ai_scored_at: idea.aiScoredAt,
       });
       dispatch({ type: 'UPDATE_IDEA', payload: idea });
+      return idea;
     } else {
       const created = await api.createIdea({
         title: idea.title, description: idea.description,
@@ -294,9 +296,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         review_status: 'pending', review_priority: 'medium', review_notes: '',
         created_by: user!.id,
       });
-      dispatch({ type: 'ADD_IDEA', payload: dbIdeaToIdea(created) });
-      // 返回新的 id（供 AI 评分后 update 用）
-      idea.id = created.id;
+      const newIdea = dbIdeaToIdea(created);
+      dispatch({ type: 'ADD_IDEA', payload: newIdea });
+      return newIdea;  // 返回带真实 id 的 idea
     }
   }, [state.ideas, user]);
 
@@ -337,31 +339,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const progress = calcProjectProgress(project.phases);
     const withProgress = { ...project, progress };
 
-    // 更新项目基本信息
-      await api.updateProject(project.id, {
-        name: project.name, description: project.description,
-        status: project.status, tech_stack: project.techStack as Record<string, string>,
-        progress,
-      });
+    await api.updateProject(project.id, {
+      name: project.name, description: project.description,
+      status: project.status, tech_stack: project.techStack as Record<string, string>,
+      progress,
+    });
 
-    // 批量更新每个阶段
-    await Promise.all(project.phases.map(p =>
-      api.updateProjectPhase(p.id, {
-        status: p.status, included: p.included !== false,
-        assignee_id: p.assigneeId,
-        started_at: p.startedAt, completed_at: p.completedAt,
-      })
-    ));
+    // 批量更新每个阶段（只更新有真实 DB uuid 的阶段，跳过临时 id）
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const realPhases = project.phases.filter(p => uuidRegex.test(p.id));
+    if (realPhases.length > 0) {
+      await Promise.all(realPhases.map(p =>
+        api.updateProjectPhase(p.id, {
+          status: p.status, included: p.included !== false,
+          assignee_id: p.assigneeId,
+          started_at: p.startedAt, completed_at: p.completedAt,
+        })
+      ));
+    }
 
     dispatch({ type: 'UPDATE_PROJECT', payload: withProgress });
 
-    // 项目完成 → 数据库触发器自动创建 GTM 产品，前端 reload 同步
-    if (project.status === 'completed') {
-      const prevStatus = state.projects.find(p => p.id === project.id)?.status;
-      if (prevStatus !== 'completed') {
-        // 稍等数据库触发器执行
-        setTimeout(() => reload(), 800);
-      }
+    // 保存后强制 reload 同步 DB 最新数据（确保 phases id 正确）
+    const prevStatus = state.projects.find(p => p.id === project.id)?.status;
+    if (project.status === 'completed' && prevStatus !== 'completed') {
+      // 项目完成：等触发器创建 GTM 产品后再 reload
+      setTimeout(() => reload(), 800);
+    } else {
+      // 普通保存：短暂延迟后 reload，确保 DB 写入完成
+      setTimeout(() => reload(), 200);
     }
   }, [state.projects, reload]);
 

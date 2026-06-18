@@ -131,16 +131,18 @@ function IdeaCard({ idea, onReview, onDelete, onConvert, isAdmin, currentUserId 
 }
 
 // ============ 验证弹窗 ============
-function ReviewModal({ idea, onSave, onClose }: {
+function ReviewModal({ idea, onSave, onClose, isAdmin }: {
   idea: Idea;
   onSave: (idea: Idea) => void;
   onClose: () => void;
+  isAdmin: boolean;
 }) {
   const [status, setStatus] = useState<ReviewStatus>(idea.manualReview?.status || 'pending');
   const [priority, setPriority] = useState<Priority>(idea.manualReview?.priority || 'medium');
   const [notes, setNotes] = useState(idea.manualReview?.notes || '');
 
   function handleSave() {
+    if (!isAdmin) return;
     onSave({
       ...idea,
       manualReview: { status, priority, notes, reviewedAt: new Date().toISOString() },
@@ -155,6 +157,12 @@ function ReviewModal({ idea, onSave, onClose }: {
         <h2 className="text-lg font-semibold text-gray-900 mb-1">人工验证</h2>
         <p className="text-sm text-gray-500 mb-4 truncate">「{idea.title}」</p>
 
+        {!isAdmin && (
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            👁 仅管理员可修改验证结果，你只能查看当前状态。
+          </div>
+        )}
+
         <div className="space-y-4">
           {/* 决策 */}
           <div>
@@ -168,12 +176,13 @@ function ReviewModal({ idea, onSave, onClose }: {
               ] as [ReviewStatus, string][]).map(([val, lbl]) => (
                 <button
                   key={val}
-                  onClick={() => setStatus(val)}
+                  onClick={() => isAdmin && setStatus(val)}
+                  disabled={!isAdmin}
                   className={`py-2 px-1 rounded-lg border text-xs font-medium transition-colors ${
                     status === val
                       ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
                       : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                  }`}
+                  } ${!isAdmin ? 'cursor-not-allowed opacity-60' : ''}`}
                 >
                   {lbl}
                 </button>
@@ -214,14 +223,15 @@ function ReviewModal({ idea, onSave, onClose }: {
               rows={3}
               placeholder="记录你的判断依据..."
               value={notes}
-              onChange={e => setNotes(e.target.value)}
+              readOnly={!isAdmin}
+              onChange={e => isAdmin && setNotes(e.target.value)}
             />
           </div>
         </div>
 
         <div className="flex gap-2 mt-5 justify-end">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-primary" onClick={handleSave}>保存</button>
+          <button className="btn-secondary" onClick={onClose}>{isAdmin ? '取消' : '关闭'}</button>
+          {isAdmin && <button className="btn-primary" onClick={handleSave}>保存</button>}
         </div>
       </div>
     </div>
@@ -260,9 +270,8 @@ export default function Phase1Page() {
 
   async function handleSubmit() {
     if (!title.trim()) return;
-    // 先创建骨架，saveIdea 内部会写 DB 并返回真实 id
-    const idea: Idea = {
-      id: '__new__',  // 占位，saveIdea 会更新为真实 id
+    const ideaDraft: Idea = {
+      id: '__new__',
       title: title.trim(),
       description: desc.trim(),
       category,
@@ -270,15 +279,18 @@ export default function Phase1Page() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await saveIdea(idea);  // 写 DB，idea.id 被更新为真实 uuid
+
+    // 写入 DB，拿到带真实 id 的 idea
+    const savedIdea = await saveIdea(ideaDraft);
     setTitle(''); setDesc(''); setTags([]); setTagInput(''); setScoreError('');
 
     // 自动 AI 评分（仅创建时触发一次）
     setScoring(true);
     try {
-      const { scores, feedback } = await scoreIdea(idea.title, idea.description, idea.category);
+      const { scores, feedback } = await scoreIdea(savedIdea.title, savedIdea.description, savedIdea.category);
+      // 用真实 id 更新评分，forceUpdate=true 绕过 state 闭包问题
       await saveIdea({
-        ...idea,
+        ...savedIdea,
         aiScores: scores,
         aiFeedback: feedback,
         aiScoredAt: new Date().toISOString(),
@@ -447,8 +459,9 @@ export default function Phase1Page() {
       {reviewIdea && (
         <ReviewModal
           idea={reviewIdea}
+          isAdmin={isAdmin}
           onSave={async (updated) => {
-            if (!profile) return;
+            if (!profile || !isAdmin) return;
             await updateIdeaReview(
               updated.id,
               updated.manualReview?.status || 'pending',
